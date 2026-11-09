@@ -1,0 +1,71 @@
+[
+  {
+    "id": "SUB-2026-001",
+    "projectTitle": "ระบบวิเคราะห์ความสุกของผลไม้ด้วยคอมพิวเตอร์วิทัศน์และการเรียนรู้เชิงลึก",
+    "groupName": "กลุ่ม DurianVision",
+    "department": "วิทยาการคอมพิวเตอร์",
+    "studentName": "นายธนกฤต วิเศษ",
+    "studentId": "6509611234",
+    "lineId": "thana_dev",
+    "pdfFileName": "Sample_DurianVision_Proposal.pdf",
+    "pdfFileUrl": "/uploads/Sample_DurianVision_Proposal.pdf",
+    "submittedAt": "2026-11-09T09:30:00.000Z",
+    "status": "NEEDS_REVISION",
+    "notes": [
+      {
+        "id": "NOTE-1",
+        "author": "อาจารย์ที่ปรึกษา (Admin)",
+        "content": "หัวข้อน่าสนใจมาก ขอให้เพิ่มการทบทวนวรรณกรรมเกี่ยวกับสถาปัตยกรรม YOLOv8 ในบทที่ 2 ด้วยครับ",
+        "sentAt": "2026-11-09T10:15:00.000Z",
+        "sentToLineId": "thana_dev",
+        "deliveryStatus": "SENT"
+      }
+    ]
+  },
+  {
+    "id": "SUB-2026-002",
+    "projectTitle": "แอปพลิเคชันจัดการและคัดแยกขยะในมหาวิทยาลัยด้วย Gamification",
+    "groupName": "กลุ่ม EcoTU",
+    "department": "เทคโนโลยีสารสนเทศ",
+    "studentName": "น.ส.กมลวรรณ รักษ์ไทย",
+    "studentId": "6509611235",
+    "lineId": "kamonwan_line",
+    "pdfFileName": "Sample_EcoTU_Proposal.pdf",
+    "pdfFileUrl": "/uploads/Sample_EcoTU_Proposal.pdf",
+    "submittedAt": "2026-11-09T11:00:00.000Z",
+    "status": "PENDING",
+    "notes": [
+      {
+        "id": "NOTE-1794209871747",
+        "author": "อาจารย์ที่ปรึกษา (Admin)",
+        "content": "เพิ่มรายละเอียดสถาปัตยกรรมระบบ และการเชื่อมต่อ API เพิ่มเติมด้วยครับ",
+        "sentAt": "2026-11-09T07:37:51.747Z",
+        "sentToLineId": "kamonwan_line",
+        "deliveryStatus": "SIMULATED"
+      }
+    ]
+  },
+  {
+    "id": "SUB-2026-003",
+    "projectTitle": "แพลตฟอร์มจับคู่และแบ่งปันหนังสือเรียนสำหรับนักศึกษา มหาวิทยาลัยธรรมศาสตร์",
+    "groupName": "กลุ่ม TU BookShare",
+    "department": "วิทยาการคอมพิวเตอร์",
+    "studentName": "นายปิยะพงษ์ ศรีสุข",
+    "studentId": "6509611236",
+    "lineId": "piyapong_tu",
+    "pdfFileName": "Sample_TU_BookShare.pdf",
+    "pdfFileUrl": "/uploads/Sample_DurianVision_Proposal.pdf",
+    "submittedAt": "2026-11-09T14:20:00.000Z",
+    "status": "APPROVED",
+    "notes": [
+      {
+        "id": "NOTE-1794209999999",
+        "author": "อาจารย์ที่ปรึกษา (Admin)",
+        "content": "ข้อเสนอโครงงานสมบูรณ์ครบถ้วน อนุมัติให้เริ่มดำเนินการพัฒนาในระยะที่ 1 ได้ครับ",
+        "sentAt": "2026-11-09T15:00:00.000Z",
+        "sentToLineId": "piyapong_tu",
+        "deliveryStatus": "SENT"
+      }
+    ]
+  }
+]

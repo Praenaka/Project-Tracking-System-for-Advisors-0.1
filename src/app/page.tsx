@@ -1,0 +1,1649 @@
+"use client";
+
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  FileText,
+  Send,
+  CheckCircle2,
+  Clock,
+  Users,
+  MessageSquare,
+  Smartphone,
+  Upload,
+  ExternalLink,
+  ShieldCheck,
+  GraduationCap,
+  Sparkles,
+  ArrowRight,
+  LogOut,
+  RefreshCw,
+  FolderOpen,
+  Info,
+  Check,
+  AlertCircle,
+  Settings,
+  Globe,
+  Lock,
+  Search,
+  Download,
+  Trash2,
+  Filter,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  ChevronDown,
+  Layers,
+  Calendar,
+  X,
+  FileSpreadsheet,
+} from "lucide-react";
+import { SubmissionItem, UserRole, ProjectStatus } from "@/lib/types";
+
+export default function AppMain() {
+  // สิทธิ์ผู้ใช้งาน: "admin" (อาจารย์), "general" (นักศึกษา), null (ยังไม่ล็อกอิน)
+  const [currentUser, setCurrentUser] = useState<UserRole>("general");
+  const [activeTab, setActiveTab] = useState<"FORM" | "REPORT" | "LINE_PREVIEW" | "SETTINGS">("FORM");
+
+  // ข้อมูลโครงงานทั้งหมด (ดึงจาก data/submissions.json)
+  const [submissions, setSubmissions] = useState<SubmissionItem[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  // ระบบค้นหาและตัวกรอง
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [departmentFilter, setDepartmentFilter] = useState<string>("ALL");
+  const [sortBy, setSortBy] = useState<"NEWEST" | "OLDEST" | "TITLE">("NEWEST");
+
+  // ข้อมูลฟอร์มกรอกงาน (นักศึกษา)
+  const [formData, setFormData] = useState({
+    projectTitle: "",
+    groupName: "",
+    department: "วิทยาการคอมพิวเตอร์",
+    studentName: "",
+    studentId: "",
+    lineId: "",
+  });
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // โมดอลเขียนโน้ตของอาจารย์
+  const [activeModalItem, setActiveModalItem] = useState<SubmissionItem | null>(null);
+  const [noteInput, setNoteInput] = useState<string>("");
+  const [noteStatus, setNoteStatus] = useState<ProjectStatus>("NEEDS_REVISION");
+  const [isSendingNote, setIsSendingNote] = useState<boolean>(false);
+
+  // โมดอลยืนยันการลบ
+  const [itemToDelete, setItemToDelete] = useState<SubmissionItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+
+  // ระบบเช็กสถานะตนเองของนักศึกษา
+  const [studentSearchKeyword, setStudentSearchKeyword] = useState<string>("");
+
+  // การตั้งค่า LINE สำหรับใช้งานจริง
+  const [lineSettings, setLineSettings] = useState({
+    token: "",
+    advisorId: "",
+  });
+  const [lineStatus, setLineStatus] = useState<{
+    isConfigured: boolean;
+    advisorIdMasked?: string;
+  }>({ isConfigured: false });
+  const [isSavingLine, setIsSavingLine] = useState<boolean>(false);
+
+  // แจ้งเตือนสถานะสำเร็จ (Toast)
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // โหลดข้อมูลโครงงานจาก API
+  const fetchSubmissions = async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch("/api/submissions");
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setSubmissions(json.data);
+      }
+    } catch (err) {
+      console.error("Fetch error:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // เช็กสถานะการตั้งค่า LINE
+  const fetchLineStatus = async () => {
+    try {
+      const res = await fetch("/api/settings/line");
+      const data = await res.json();
+      setLineStatus(data);
+    } catch (err) {
+      console.error("Fetch line status error:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchSubmissions();
+    fetchLineStatus();
+  }, []);
+
+  // เมื่อเปลี่ยนสิทธิ์ ให้ปรับแท็บอัตโนมัติ
+  const handleSelectRole = (role: UserRole) => {
+    setCurrentUser(role);
+    if (role === "admin") {
+      setActiveTab("REPORT");
+    } else if (role === "general") {
+      setActiveTab("FORM");
+    }
+  };
+
+  // สรุปสถิติ (KPIs)
+  const stats = useMemo(() => {
+    const total = submissions.length;
+    const pending = submissions.filter((s) => s.status === "PENDING" || !s.status).length;
+    const needsRevision = submissions.filter((s) => s.status === "NEEDS_REVISION").length;
+    const approved = submissions.filter((s) => s.status === "APPROVED").length;
+    return { total, pending, needsRevision, approved };
+  }, [submissions]);
+
+  // ดึงรายการสาขาวิชาทั้งหมดที่มี
+  const departmentsList = useMemo(() => {
+    const set = new Set<string>();
+    submissions.forEach((s) => {
+      if (s.department) set.add(s.department);
+    });
+    return Array.from(set);
+  }, [submissions]);
+
+  // รายการที่ผ่านการกรองและเรียงลำดับ
+  const filteredSubmissions = useMemo(() => {
+    return submissions
+      .filter((item) => {
+        const query = searchQuery.trim().toLowerCase();
+        const matchSearch =
+          !query ||
+          item.projectTitle.toLowerCase().includes(query) ||
+          item.groupName.toLowerCase().includes(query) ||
+          item.studentName.toLowerCase().includes(query) ||
+          item.studentId.includes(query) ||
+          item.lineId.toLowerCase().includes(query);
+
+        const currentStatus = item.status || "PENDING";
+        const matchStatus = statusFilter === "ALL" || currentStatus === statusFilter;
+        const matchDepartment = departmentFilter === "ALL" || item.department === departmentFilter;
+
+        return matchSearch && matchStatus && matchDepartment;
+      })
+      .sort((a, b) => {
+        if (sortBy === "NEWEST") {
+          return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+        }
+        if (sortBy === "OLDEST") {
+          return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+        }
+        return a.projectTitle.localeCompare(b.projectTitle, "th");
+      });
+  }, [submissions, searchQuery, statusFilter, departmentFilter, sortBy]);
+
+  // การแสดงผล Badge สถานะ
+  const getStatusBadge = (status?: ProjectStatus) => {
+    switch (status) {
+      case "APPROVED":
+        return {
+          label: "ผ่านการอนุมัติ",
+          className: "bg-emerald-100 text-emerald-800 border-emerald-300",
+          icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />,
+        };
+      case "NEEDS_REVISION":
+        return {
+          label: "มีข้อเสนอแนะ/รอปรับปรุง",
+          className: "bg-blue-100 text-blue-800 border-blue-300",
+          icon: <AlertCircle className="w-3.5 h-3.5 text-blue-600" />,
+        };
+      case "REJECTED":
+        return {
+          label: "ไม่อนุมัติ",
+          className: "bg-rose-100 text-rose-800 border-rose-300",
+          icon: <XCircle className="w-3.5 h-3.5 text-rose-600" />,
+        };
+      case "PENDING":
+      default:
+        return {
+          label: "รอตรวจ",
+          className: "bg-amber-100 text-amber-800 border-amber-300",
+          icon: <Clock className="w-3.5 h-3.5 text-amber-600" />,
+        };
+    }
+  };
+
+  // จัดการการส่งฟอร์ม (นักศึกษา)
+  const handleSubmitForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!formData.projectTitle.trim()) {
+      alert("กรุณากรอกชื่อโครงการ");
+      return;
+    }
+    if (!formData.groupName.trim()) {
+      alert("กรุณากรอกชื่อกลุ่ม");
+      return;
+    }
+    if (!formData.studentName.trim()) {
+      alert("กรุณากรอกชื่อผู้จัดทำ");
+      return;
+    }
+    if (!formData.studentId.trim()) {
+      alert("กรุณากรอกรหัสนักศึกษา");
+      return;
+    }
+    if (!formData.lineId.trim()) {
+      alert("กรุณากรอก ID Line สำหรับรับแจ้งเตือน");
+      return;
+    }
+    if (!selectedFile) {
+      alert("กรุณาเลือกไฟล์ PDF ของโครงการก่อนกดบันทึก");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const body = new FormData();
+      body.append("projectTitle", formData.projectTitle);
+      body.append("groupName", formData.groupName);
+      body.append("department", formData.department);
+      body.append("studentName", formData.studentName);
+      body.append("studentId", formData.studentId);
+      body.append("lineId", formData.lineId);
+      body.append("pdfFile", selectedFile);
+
+      const res = await fetch("/api/submissions", {
+        method: "POST",
+        body,
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setToastMessage(`✅ บันทึกลง JSON และส่งแจ้งเตือนเข้า LINE อาจารย์เรียบร้อยแล้ว!`);
+        setTimeout(() => setToastMessage(null), 6000);
+
+        // บันทึกรหัสนักศึกษาไว้ให้ในช่องค้นหาติดตามผลทันที
+        setStudentSearchKeyword(formData.studentId);
+
+        // รีเซ็ตฟอร์ม
+        setFormData({
+          projectTitle: "",
+          groupName: "",
+          department: "วิทยาการคอมพิวเตอร์",
+          studentName: "",
+          studentId: "",
+          lineId: "",
+        });
+        setSelectedFile(null);
+
+        // รีเฟรชรายการ
+        await fetchSubmissions();
+      } else {
+        alert(data.message || "เกิดข้อผิดพลาดในการบันทึก");
+      }
+    } catch (err: any) {
+      alert("เกิดข้อผิดพลาด: " + err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // เปลี่ยนสถานะโครงงานโดยตรง
+  const handleUpdateStatus = async (id: string, newStatus: ProjectStatus) => {
+    try {
+      const res = await fetch(`/api/submissions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setToastMessage(`🔄 อัปเดตสถานะเป็น "${getStatusBadge(newStatus).label}" เรียบร้อยแล้ว`);
+        setTimeout(() => setToastMessage(null), 4000);
+        await fetchSubmissions();
+      } else {
+        alert(data.message || "อัปเดตสถานะไม่สำเร็จ");
+      }
+    } catch (err: any) {
+      alert("เกิดข้อผิดพลาด: " + err.message);
+    }
+  };
+
+  // อาจารย์ส่งโน้ตกลับหานักศึกษา พร้อมเปลี่ยนสถานะ
+  const handleSendNote = async () => {
+    if (!activeModalItem) return;
+    if (!noteInput.trim()) {
+      alert("กรุณาพิมพ์ข้อความโน้ตก่อนกดส่ง");
+      return;
+    }
+
+    setIsSendingNote(true);
+    try {
+      const res = await fetch(`/api/submissions/${activeModalItem.id}/note`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          noteText: noteInput,
+          status: noteStatus,
+        }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setToastMessage(`📱 ส่งโน้ตและอัปเดตสถานะโครงงานไปยัง LINE "${activeModalItem.lineId}" เรียบร้อยแล้ว!`);
+        setTimeout(() => setToastMessage(null), 6000);
+        setNoteInput("");
+        setActiveModalItem(null);
+        await fetchSubmissions();
+      } else {
+        alert(data.message || "ส่งโน้ตไม่สำเร็จ");
+      }
+    } catch (err: any) {
+      alert("เกิดข้อผิดพลาด: " + err.message);
+    } finally {
+      setIsSendingNote(false);
+    }
+  };
+
+  // ลบรายการโครงงาน
+  const handleDeleteSubmission = async () => {
+    if (!itemToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/submissions/${itemToDelete.id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (data.success) {
+        setToastMessage(`🗑️ ลบโครงงาน "${itemToDelete.projectTitle}" เรียบร้อยแล้ว`);
+        setTimeout(() => setToastMessage(null), 4000);
+        setItemToDelete(null);
+        await fetchSubmissions();
+      } else {
+        alert(data.message || "ลบโครงงานไม่สำเร็จ");
+      }
+    } catch (err: any) {
+      alert("เกิดข้อผิดพลาด: " + err.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // ส่งออกข้อมูลตารางเป็น Excel (CSV ที่รองรับภาษาไทย UTF-8 BOM)
+  const handleExportCSV = () => {
+    if (submissions.length === 0) {
+      alert("ไม่มีข้อมูลสำหรับส่งออก");
+      return;
+    }
+
+    const headers = [
+      "รหัสการส่ง",
+      "ชื่อโครงงาน",
+      "ชื่อกลุ่ม",
+      "สาขาวิชา",
+      "ผู้จัดทำ",
+      "รหัสนักศึกษา",
+      "ID Line",
+      "สถานะปัจจุบัน",
+      "จำนวนโน้ตข้อเสนอแนะ",
+      "วันที่ส่ง",
+      "ชื่อไฟล์ PDF",
+    ];
+
+    const rows = submissions.map((item) => [
+      item.id,
+      `"${item.projectTitle.replace(/"/g, '""')}"`,
+      `"${item.groupName.replace(/"/g, '""')}"`,
+      `"${item.department.replace(/"/g, '""')}"`,
+      `"${item.studentName.replace(/"/g, '""')}"`,
+      `"${item.studentId}"`,
+      `"${item.lineId}"`,
+      `"${getStatusBadge(item.status).label}"`,
+      item.notes ? item.notes.length : 0,
+      new Date(item.submittedAt).toLocaleString("th-TH"),
+      `"${item.pdfFileName}"`,
+    ]);
+
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `TU_Project_Submissions_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setToastMessage("📥 ดาวน์โหลดไฟล์รายงาน CSV/Excel เรียบร้อยแล้ว");
+    setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  // บันทึกและทดสอบเชื่อมต่อ LINE จริง
+  const handleSaveAndTestLine = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!lineSettings.token.trim() || !lineSettings.advisorId.trim()) {
+      alert("กรุณากรอกทั้ง Token และ User ID ของอาจารย์ครับ");
+      return;
+    }
+
+    setIsSavingLine(true);
+    try {
+      const res = await fetch("/api/settings/line", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channelAccessToken: lineSettings.token,
+          advisorLineId: lineSettings.advisorId,
+        }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setToastMessage(data.message);
+        setTimeout(() => setToastMessage(null), 7000);
+        await fetchLineStatus();
+        setLineSettings({ token: "", advisorId: "" });
+      } else {
+        alert(data.message || "เชื่อมต่อไม่สำเร็จ กรุณาตรวจสอบข้อมูล");
+      }
+    } catch (err: any) {
+      alert("เกิดข้อผิดพลาด: " + err.message);
+    } finally {
+      setIsSavingLine(false);
+    }
+  };
+
+  // ค้นหาของนักศึกษาเพื่อติดตามสถานะ
+  const studentTrackedItems = useMemo(() => {
+    if (!studentSearchKeyword.trim()) return [];
+    const kw = studentSearchKeyword.trim().toLowerCase();
+    return submissions.filter(
+      (s) =>
+        s.studentId.includes(kw) ||
+        s.groupName.toLowerCase().includes(kw) ||
+        s.lineId.toLowerCase().includes(kw)
+    );
+  }, [submissions, studentSearchKeyword]);
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-20">
+      {/* Toast Alert */}
+      {toastMessage && (
+        <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-500 animate-in fade-in slide-in-from-top-4">
+          <Smartphone className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+          <span className="text-sm font-medium">{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Main Navigation Bar */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap justify-between items-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white font-extrabold shadow-md shadow-emerald-500/20 text-base">
+              TU
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-base sm:text-lg font-bold text-slate-900 leading-none">
+                  ระบบติดตามโครงงานและส่งงานผ่าน LINE
+                </h1>
+                {lineStatus.isConfigured ? (
+                  <span className="text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5 border border-emerald-200">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    เชื่อมต่อ LINE แล้ว ({lineStatus.advisorIdMasked})
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-semibold bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
+                    โหมดจำลอง (Simulator)
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                มหาวิทยาลัยธรรมศาสตร์ • จัดเก็บไฟล์ใน uploads • จัดเก็บข้อมูล mock json • ส่งผ่าน LINE
+              </p>
+            </div>
+          </div>
+
+          {/* User Role Switcher */}
+          <div className="flex items-center gap-2">
+            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+              <button
+                onClick={() => handleSelectRole("general")}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+                  currentUser === "general"
+                    ? "bg-white text-emerald-700 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                General (นักศึกษา)
+              </button>
+              <button
+                onClick={() => handleSelectRole("admin")}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+                  currentUser === "admin"
+                    ? "bg-white text-emerald-700 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                Admin (อาจารย์)
+              </button>
+            </div>
+
+            <button
+              onClick={() => setCurrentUser(null)}
+              title="ออกจากระบบ เพื่อดูหน้า Login"
+              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Sub-menu Tabs (เมื่อเลือก Role แล้ว) */}
+        {currentUser !== null && (
+          <div className="bg-slate-50 border-t border-slate-200">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap gap-2 py-2">
+              <button
+                onClick={() => setActiveTab("FORM")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition ${
+                  activeTab === "FORM"
+                    ? "bg-emerald-600 text-white shadow-xs"
+                    : "text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <Upload className="w-3.5 h-3.5" />
+                หน้ากรอกแบบฟอร์มส่งโครงงาน
+              </button>
+              <button
+                onClick={() => setActiveTab("REPORT")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition ${
+                  activeTab === "REPORT"
+                    ? "bg-emerald-600 text-white shadow-xs"
+                    : "text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                หน้ารายงานสำหรับอาจารย์ ({submissions.length})
+              </button>
+              <button
+                onClick={() => setActiveTab("LINE_PREVIEW")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition ${
+                  activeTab === "LINE_PREVIEW"
+                    ? "bg-[#06C755] text-white shadow-xs"
+                    : "text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                ตัวอย่างการแจ้งเตือนใน LINE
+              </button>
+              <button
+                onClick={() => setActiveTab("SETTINGS")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition ${
+                  activeTab === "SETTINGS"
+                    ? "bg-slate-900 text-white shadow-xs"
+                    : "text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+                ⚙️ คู่มือและวิธีใช้งานจริง (LINE API)
+              </button>
+            </div>
+          </div>
+        )}
+      </header>
+
+      {/* Main Content Area */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
+
+        {/* ============================================================== */}
+        {/* 1. หน้า LOGIN (Mockup User: Admin & General)                   */}
+        {/* ============================================================== */}
+        {currentUser === null && (
+          <div className="max-w-3xl mx-auto py-10 space-y-8 text-center">
+            <div className="space-y-3">
+              <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full uppercase tracking-wider">
+                1. หน้าเข้าสู่ระบบ (Mockup Login)
+              </span>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900">
+                เข้าสู่ระบบเพื่อใช้งานระบบติดตามโครงงาน
+              </h2>
+              <p className="text-sm text-slate-500 max-w-lg mx-auto">
+                เลือกว่าคุณต้องการเข้าใช้งานในบทบาทใด เพื่อทดสอบการทำงานของระบบ
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left pt-4">
+              {/* General User Card */}
+              <div
+                onClick={() => handleSelectRole("general")}
+                className="bg-white p-7 rounded-3xl border-2 border-slate-200 hover:border-emerald-500 hover:shadow-xl transition-all cursor-pointer group space-y-4"
+              >
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:scale-110 transition">
+                  <GraduationCap className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 group-hover:text-emerald-700 transition">
+                    General (นักศึกษา / ผู้จัดทำ)
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    สำหรับนักศึกษากรอกแบบฟอร์มส่งโครงการ แนบไฟล์ PDF และส่งการแจ้งเตือนตรงไปยัง LINE ของอาจารย์ที่ปรึกษา
+                  </p>
+                </div>
+                <div className="pt-2 flex items-center text-xs font-bold text-emerald-600 gap-1 group-hover:gap-2 transition-all">
+                  เข้าสู่หน้ากรอกแบบฟอร์ม <ArrowRight className="w-4 h-4" />
+                </div>
+              </div>
+
+              {/* Admin User Card */}
+              <div
+                onClick={() => handleSelectRole("admin")}
+                className="bg-white p-7 rounded-3xl border-2 border-slate-200 hover:border-blue-500 hover:shadow-xl transition-all cursor-pointer group space-y-4"
+              >
+                <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:scale-110 transition">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 group-hover:text-blue-700 transition">
+                    Admin (อาจารย์ที่ปรึกษา)
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    สำหรับอาจารย์เปิดดูรายงานโครงการทั้งหมด ตรวจสอบสถานะ เปิดอ่านไฟล์ PDF แต่ละกลุ่ม และพิมพ์โน้ตส่งกลับไปยัง LINE นักศึกษา
+                  </p>
+                </div>
+                <div className="pt-2 flex items-center text-xs font-bold text-blue-600 gap-1 group-hover:gap-2 transition-all">
+                  เข้าสู่หน้ารายงานสำหรับอาจารย์ <ArrowRight className="w-4 h-4" />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* 2. หน้ากรอกแบบฟอร์ม (Form Submission)                          */}
+        {/* ============================================================== */}
+        {currentUser !== null && activeTab === "FORM" && (
+          <div className="max-w-3xl mx-auto space-y-8">
+            <div className="bg-white p-7 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+              <div className="border-b border-slate-100 pb-4">
+                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full uppercase">
+                  2. แบบฟอร์มส่งโครงงาน (สำหรับนักศึกษา)
+                </span>
+                <h2 className="text-xl font-extrabold text-slate-900 mt-2">
+                  กรอกรายละเอียดโครงการและแนบไฟล์ PDF
+                </h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  เมื่อกดบันทึก ข้อมูลจะถูกจัดเก็บลง <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-800">data/submissions.json</code> ไฟล์จะถูกเซฟใน <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-800">uploads/</code> และส่งแจ้งเตือนเข้า LINE อาจารย์ทันที
+                </p>
+              </div>
+
+              <form onSubmit={handleSubmitForm} className="space-y-4 text-xs">
+                {/* 1. ชื่อโครงการ */}
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-700 block">
+                    1. ชื่อโครงการ (Project Title) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.projectTitle}
+                    onChange={(e) => setFormData({ ...formData, projectTitle: e.target.value })}
+                    placeholder="เช่น ระบบตรวจจับความสุกของทุเรียนด้วยภาพถ่ายและการเรียนรู้เชิงลึก"
+                    className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-slate-900"
+                  />
+                </div>
+
+                {/* 2. ชื่อกลุ่ม และ 3. สาขาวิชา */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="font-bold text-slate-700 block">
+                      2. ชื่อกลุ่ม <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formData.groupName}
+                      onChange={(e) => setFormData({ ...formData, groupName: e.target.value })}
+                      placeholder="เช่น กลุ่ม DurianAI (กลุ่มที่ 4)"
+                      className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-slate-900"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="font-bold text-slate-700 block">
+                      3. สาขาวิชา <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formData.department}
+                      onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                      placeholder="เช่น วิทยาการคอมพิวเตอร์ / IT"
+                      className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-slate-900"
+                    />
+                  </div>
+                </div>
+
+                {/* 4. ชื่อผู้จัดทำ และ 5. รหัสนักศึกษา */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="font-bold text-slate-700 block">
+                      4. ชื่อผู้จัดทำ (หัวหน้ากลุ่ม/ตัวแทน) <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formData.studentName}
+                      onChange={(e) => setFormData({ ...formData, studentName: e.target.value })}
+                      placeholder="เช่น นายธนกฤต วิเศษ"
+                      className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-slate-900"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="font-bold text-slate-700 block">
+                      5. รหัสนักศึกษา <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formData.studentId}
+                      onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
+                      placeholder="เช่น 6509611234"
+                      className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-slate-900"
+                    />
+                  </div>
+                </div>
+
+                {/* 6. ID Line สำหรับรับแจ้งเตือน */}
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-700 block">
+                    6. ID Line (สำหรับให้อาจารย์ส่งโน้ตตอบกลับ) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.lineId}
+                    onChange={(e) => setFormData({ ...formData, lineId: e.target.value })}
+                    placeholder="เช่น thanakrit_line หรือ User ID ของนักศึกษา"
+                    className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-slate-900"
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    * เมื่ออาจารย์ตรวจงานและพิมพ์โน้ต ระบบจะส่งข้อความตอบกลับไปยัง LINE นี้
+                  </p>
+                </div>
+
+                {/* 7. อัปโหลดไฟล์ PDF */}
+                <div className="space-y-1.5 pt-2">
+                  <label className="font-bold text-slate-700 block">
+                    7. อัปโหลดไฟล์ PDF โครงงาน <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="border-2 border-dashed border-slate-300 rounded-2xl p-6 text-center hover:border-emerald-500 transition bg-slate-50/50 relative">
+                    <input
+                      type="file"
+                      accept=".pdf"
+                      required
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          setSelectedFile(e.target.files[0]);
+                        }
+                      }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                    {selectedFile ? (
+                      <div className="space-y-1">
+                        <p className="text-xs font-bold text-emerald-700">
+                          ไฟล์ที่เลือก: {selectedFile.name}
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          ขนาด: {(selectedFile.size / 1024 / 1024).toFixed(2)} MB • คลิกเพื่อเปลี่ยนไฟล์
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold text-slate-700">
+                          คลิกหรือลากไฟล์ PDF มาวางที่นี่
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          เฉพาะไฟล์นามสกุล .pdf (บันทึกจัดเก็บใน root project)
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Submit Button */}
+                <div className="pt-4">
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition disabled:opacity-50"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        กำลังบันทึกและส่งแจ้งเตือนเข้า LINE...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        บันทึกข้อมูลและส่งแจ้งเตือนไปยัง LINE อาจารย์
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* ส่วนเช็กสถานะโครงงานสำหรับนักศึกษา */}
+            <div className="bg-white p-7 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+              <div className="flex items-center gap-2 text-slate-800">
+                <Search className="w-5 h-5 text-emerald-600" />
+                <h3 className="text-sm font-bold">
+                  🔍 ตรวจสอบสถานะโครงงานของฉัน (สำหรับนักศึกษา)
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500">
+                พิมพ์รหัสนักศึกษา หรือชื่อกลุ่ม เพื่อตรวจดูสถานะการอนุมัติและอ่านโน้ตคำแนะนำจากอาจารย์ได้ทันที:
+              </p>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={studentSearchKeyword}
+                  onChange={(e) => setStudentSearchKeyword(e.target.value)}
+                  placeholder="พิมพ์รหัสนักศึกษา เช่น 6509611234 หรือชื่อกลุ่ม..."
+                  className="flex-1 p-2.5 rounded-xl border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                {studentSearchKeyword && (
+                  <button
+                    onClick={() => setStudentSearchKeyword("")}
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs text-slate-600 font-semibold"
+                  >
+                    ล้าง
+                  </button>
+                )}
+              </div>
+
+              {studentSearchKeyword.trim() && (
+                <div className="space-y-3 pt-2">
+                  {studentTrackedItems.length === 0 ? (
+                    <p className="text-xs text-amber-600 bg-amber-50 p-3 rounded-xl border border-amber-200">
+                      ไม่พบโครงงานที่ตรงกับคำค้นหานี้ กรุณาตรวจสอบรหัสนักศึกษาหรือชื่อกลุ่มอีกครั้งครับ
+                    </p>
+                  ) : (
+                    studentTrackedItems.map((item) => {
+                      const badge = getStatusBadge(item.status);
+                      return (
+                        <div
+                          key={item.id}
+                          className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 text-xs"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <h4 className="font-bold text-slate-900 text-sm">{item.projectTitle}</h4>
+                              <p className="text-slate-500 text-[11px] mt-0.5">
+                                กลุ่ม: {item.groupName} • ผู้ส่ง: {item.studentName} ({item.studentId})
+                              </p>
+                            </div>
+                            <span
+                              className={`px-3 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1.5 border ${badge.className}`}
+                            >
+                              {badge.icon}
+                              {badge.label}
+                            </span>
+                          </div>
+
+                          {/* โน้ตจากอาจารย์ */}
+                          {item.notes && item.notes.length > 0 ? (
+                            <div className="bg-white p-3 rounded-xl border border-blue-200 space-y-1.5">
+                              <span className="font-bold text-blue-700 block text-[11px]">
+                                💬 คำแนะนำล่าสุดจากอาจารย์:
+                              </span>
+                              <p className="text-slate-800 italic">&ldquo;{item.notes[0].content}&rdquo;</p>
+                              <span className="text-[10px] text-slate-400 block">
+                                ส่งเมื่อ: {new Date(item.notes[0].sentAt).toLocaleString("th-TH")}
+                              </span>
+                            </div>
+                          ) : (
+                            <p className="text-slate-400 text-[11px]">
+                              ยังไม่มีโน้ตตอบกลับจากอาจารย์ (กำลังรอตรวจ)
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* 3. หน้ารายงาน (Dashboard สำหรับอาจารย์พร้อมฟีเจอร์ยกระดับ)     */}
+        {/* ============================================================== */}
+        {currentUser !== null && activeTab === "REPORT" && (
+          <div className="space-y-6">
+            {/* Header & Export Button */}
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full uppercase">
+                  3. หน้ารายงานโครงการทั้งหมด (Advisor Dashboard)
+                </span>
+                <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 mt-1">
+                  ติดตามความคืบหน้าโครงงาน ({submissions.length} รายการ)
+                </h2>
+                <p className="text-xs text-slate-500">
+                  ระบบเชื่อมต่อข้อมูลจาก <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-800">data/submissions.json</code> และ <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-800">uploads/</code> รองรับค้นหา กรอง เปลี่ยนสถานะ และส่งออก Excel
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportCSV}
+                  title="ดาวน์โหลดข้อมูลทั้งหมดเป็นไฟล์ Excel CSV"
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  ส่งออก Excel (CSV)
+                </button>
+                <button
+                  onClick={fetchSubmissions}
+                  disabled={isLoading}
+                  className="px-3.5 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+                  รีเฟรช
+                </button>
+              </div>
+            </div>
+
+            {/* KPI Statistics Overview Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* 1. ทั้งหมด */}
+              <div
+                onClick={() => setStatusFilter("ALL")}
+                className={`p-4 rounded-2xl border transition cursor-pointer ${
+                  statusFilter === "ALL"
+                    ? "bg-slate-900 text-white border-slate-900 shadow-md"
+                    : "bg-white text-slate-800 border-slate-200 hover:border-slate-400 shadow-xs"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold opacity-80">ทั้งหมด</span>
+                  <Layers className="w-4 h-4 opacity-70" />
+                </div>
+                <div className="text-2xl font-black mt-2">{stats.total}</div>
+                <div className="text-[11px] opacity-70 mt-0.5">โครงงานที่ส่งเข้ามา</div>
+              </div>
+
+              {/* 2. รอตรวจ */}
+              <div
+                onClick={() => setStatusFilter("PENDING")}
+                className={`p-4 rounded-2xl border transition cursor-pointer ${
+                  statusFilter === "PENDING"
+                    ? "bg-amber-500 text-white border-amber-600 shadow-md"
+                    : "bg-white text-slate-800 border-amber-200 hover:border-amber-400 shadow-xs"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-700">รอตรวจ</span>
+                  <Clock className="w-4 h-4 text-amber-500" />
+                </div>
+                <div className="text-2xl font-black text-amber-600 mt-2">{stats.pending}</div>
+                <div className="text-[11px] text-amber-700/80 mt-0.5">ยังไม่ได้ให้ข้อเสนอแนะ</div>
+              </div>
+
+              {/* 3. มีข้อเสนอแนะ / ส่งกลับแก้ไข */}
+              <div
+                onClick={() => setStatusFilter("NEEDS_REVISION")}
+                className={`p-4 rounded-2xl border transition cursor-pointer ${
+                  statusFilter === "NEEDS_REVISION"
+                    ? "bg-blue-600 text-white border-blue-700 shadow-md"
+                    : "bg-white text-slate-800 border-blue-200 hover:border-blue-400 shadow-xs"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-blue-700">มีข้อเสนอแนะ</span>
+                  <AlertCircle className="w-4 h-4 text-blue-500" />
+                </div>
+                <div className="text-2xl font-black text-blue-600 mt-2">{stats.needsRevision}</div>
+                <div className="text-[11px] text-blue-700/80 mt-0.5">ส่งคำแนะนำให้ นศ. แก้ไข</div>
+              </div>
+
+              {/* 4. ผ่านการอนุมัติ */}
+              <div
+                onClick={() => setStatusFilter("APPROVED")}
+                className={`p-4 rounded-2xl border transition cursor-pointer ${
+                  statusFilter === "APPROVED"
+                    ? "bg-emerald-600 text-white border-emerald-700 shadow-md"
+                    : "bg-white text-slate-800 border-emerald-200 hover:border-emerald-400 shadow-xs"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-700">ผ่านการอนุมัติ</span>
+                  <CheckCircle className="w-4 h-4 text-emerald-500" />
+                </div>
+                <div className="text-2xl font-black text-emerald-600 mt-2">{stats.approved}</div>
+                <div className="text-[11px] text-emerald-700/80 mt-0.5">โครงงานผ่านการเห็นชอบ</div>
+              </div>
+            </div>
+
+            {/* Toolbar: Search & Advanced Filters */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap gap-3 items-center justify-between text-xs">
+              {/* Search Box */}
+              <div className="relative flex-1 min-w-[240px]">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="ค้นหาชื่อโครงงาน, กลุ่ม, ผู้จัดทำ, รหัส นศ., ID LINE..."
+                  className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Status Filter */}
+              <div className="flex items-center gap-1.5">
+                <Filter className="w-3.5 h-3.5 text-slate-400" />
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="py-2 px-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 font-medium focus:outline-none"
+                >
+                  <option value="ALL">สถานะทั้งหมด</option>
+                  <option value="PENDING">รอตรวจ</option>
+                  <option value="NEEDS_REVISION">มีข้อเสนอแนะ/รอปรับปรุง</option>
+                  <option value="APPROVED">ผ่านการอนุมัติ</option>
+                  <option value="REJECTED">ไม่อนุมัติ</option>
+                </select>
+              </div>
+
+              {/* Department Filter */}
+              {departmentsList.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={departmentFilter}
+                    onChange={(e) => setDepartmentFilter(e.target.value)}
+                    className="py-2 px-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 font-medium focus:outline-none"
+                  >
+                    <option value="ALL">ทุกสาขาวิชา</option>
+                    {departmentsList.map((dep) => (
+                      <option key={dep} value={dep}>
+                        {dep}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Sort By */}
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className="py-2 px-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 font-medium focus:outline-none"
+                >
+                  <option value="NEWEST">เรียงลำดับ: ล่าสุด</option>
+                  <option value="OLDEST">เรียงลำดับ: เก่าสุด</option>
+                  <option value="TITLE">เรียงตาม: ชื่อโครงงาน (ก-ฮ)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Submissions List / Table */}
+            {filteredSubmissions.length === 0 ? (
+              <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center space-y-3">
+                <FolderOpen className="w-12 h-12 text-slate-300 mx-auto" />
+                <h3 className="text-base font-bold text-slate-700">ไม่พบโครงงานที่ตรงกับเงื่อนไข</h3>
+                <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                  ลองล้างคำค้นหา หรือเปลี่ยนตัวกรองสถานะดูอีกครั้งครับ
+                </p>
+                <button
+                  onClick={() => {
+                    setSearchQuery("");
+                    setStatusFilter("ALL");
+                    setDepartmentFilter("ALL");
+                  }}
+                  className="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-xl shadow-xs"
+                >
+                  ล้างตัวกรองทั้งหมด
+                </button>
+              </div>
+            ) : (
+              <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
+                      <tr>
+                        <th className="py-3.5 px-4">ชื่อโครงการ & กลุ่ม</th>
+                        <th className="py-3.5 px-4">สาขาวิชา</th>
+                        <th className="py-3.5 px-4">ผู้จัดทำ (รหัส นศ.)</th>
+                        <th className="py-3.5 px-4">ID Line</th>
+                        <th className="py-3.5 px-4">ไฟล์เอกสาร PDF</th>
+                        <th className="py-3.5 px-4 text-center">สถานะโครงงาน</th>
+                        <th className="py-3.5 px-4 text-center">โน้ตประวัติ</th>
+                        <th className="py-3.5 px-4 text-right">การจัดการ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {filteredSubmissions.map((item) => {
+                        const noteCount = item.notes ? item.notes.length : 0;
+                        const badge = getStatusBadge(item.status);
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-50/70 transition">
+                            {/* ชื่อโครงการ & กลุ่ม */}
+                            <td className="py-4 px-4 max-w-xs">
+                              <span className="font-bold text-slate-900 block text-sm line-clamp-1">
+                                {item.projectTitle}
+                              </span>
+                              <span className="text-xs text-emerald-700 font-semibold mt-0.5 inline-block">
+                                {item.groupName}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block mt-0.5">
+                                รหัส: {item.id} • {new Date(item.submittedAt).toLocaleDateString("th-TH")}
+                              </span>
+                            </td>
+
+                            {/* สาขา */}
+                            <td className="py-4 px-4 font-medium text-slate-600">
+                              {item.department}
+                            </td>
+
+                            {/* ผู้จัดทำ */}
+                            <td className="py-4 px-4">
+                              <div className="font-semibold text-slate-800">{item.studentName}</div>
+                              <div className="text-[11px] text-slate-400">{item.studentId}</div>
+                            </td>
+
+                            {/* ID Line */}
+                            <td className="py-4 px-4">
+                              <span className="bg-emerald-50 text-emerald-800 font-mono font-bold px-2 py-1 rounded-md text-[11px] inline-flex items-center gap-1">
+                                <Smartphone className="w-3 h-3 text-[#06C755]" />
+                                {item.lineId}
+                              </span>
+                            </td>
+
+                            {/* ไฟล์ PDF */}
+                            <td className="py-4 px-4">
+                              <a
+                                href={item.pdfFileUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-lg text-xs transition"
+                              >
+                                <FileText className="w-3.5 h-3.5 text-rose-500" />
+                                เปิดดู PDF
+                                <ExternalLink className="w-3 h-3 text-slate-400" />
+                              </a>
+                            </td>
+
+                            {/* ตัวเลือกเปลี่ยนสถานะแบบทันใจ */}
+                            <td className="py-4 px-4 text-center">
+                              <select
+                                value={item.status || "PENDING"}
+                                onChange={(e) => handleUpdateStatus(item.id, e.target.value as ProjectStatus)}
+                                className={`text-[11px] font-bold px-2.5 py-1 rounded-full border cursor-pointer focus:outline-none ${badge.className}`}
+                              >
+                                <option value="PENDING">🟡 รอตรวจ</option>
+                                <option value="NEEDS_REVISION">🔵 มีข้อเสนอแนะ</option>
+                                <option value="APPROVED">🟢 ผ่านการอนุมัติ</option>
+                                <option value="REJECTED">🔴 ไม่อนุมัติ</option>
+                              </select>
+                            </td>
+
+                            {/* โน้ตประวัติ */}
+                            <td className="py-4 px-4 text-center">
+                              {noteCount > 0 ? (
+                                <button
+                                  onClick={() => {
+                                    setActiveModalItem(item);
+                                    setNoteStatus(item.status || "NEEDS_REVISION");
+                                    setNoteInput("");
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 hover:bg-blue-200 transition"
+                                >
+                                  <Check className="w-3 h-3" /> มี {noteCount} โน้ต
+                                </button>
+                              ) : (
+                                <span className="text-slate-400 text-xs">ยังไม่มีโน้ต</span>
+                              )}
+                            </td>
+
+                            {/* ปุ่มการจัดการ */}
+                            <td className="py-4 px-4 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => {
+                                    setActiveModalItem(item);
+                                    setNoteStatus(item.status || "NEEDS_REVISION");
+                                    setNoteInput("");
+                                  }}
+                                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1 transition"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                  โน้ต & ส่ง LINE
+                                </button>
+                                <button
+                                  onClick={() => setItemToDelete(item)}
+                                  title="ลบโครงงานนี้"
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Modal: สำหรับพิมพ์โน้ตและกดส่งกลับเข้า LINE นักศึกษา พร้อมปรับสถานะ */}
+            {activeModalItem && (
+              <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-5 animate-in fade-in zoom-in-95">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full uppercase">
+                        ส่งโน้ตตอบกลับ & ปรับสถานะผ่าน LINE
+                      </span>
+                      <h3 className="text-base font-bold text-slate-900 mt-2">
+                        {activeModalItem.projectTitle}
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        กลุ่ม: {activeModalItem.groupName} • ผู้รับ: {activeModalItem.studentName} (ID Line: <strong className="text-emerald-600">{activeModalItem.lineId}</strong>)
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setActiveModalItem(null)}
+                      className="text-slate-400 hover:text-slate-600 p-1"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {/* กล่องประวัติโน้ตเดิม (ถ้ามี) */}
+                  {activeModalItem.notes && activeModalItem.notes.length > 0 && (
+                    <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2 max-h-36 overflow-y-auto">
+                      <span className="text-[11px] font-bold text-slate-600 block">ประวัติโน้ตที่เคยส่งแล้ว:</span>
+                      {activeModalItem.notes.map((n) => (
+                        <div key={n.id} className="text-xs bg-white p-2.5 rounded-xl border border-slate-200 space-y-1">
+                          <p className="text-slate-800">{n.content}</p>
+                          <span className="text-[10px] text-slate-400 block">
+                            ส่งเมื่อ: {new Date(n.sentAt).toLocaleString("th-TH")}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* เลือกสถานะโครงงานหลังตรวจ */}
+                  <div className="space-y-1.5 text-xs">
+                    <label className="font-bold text-slate-700 block">
+                      ปรับสถานะโครงงานหลังตรวจ:
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setNoteStatus("NEEDS_REVISION")}
+                        className={`p-2.5 rounded-xl border text-left font-bold flex items-center gap-2 transition ${
+                          noteStatus === "NEEDS_REVISION"
+                            ? "bg-blue-50 border-blue-500 text-blue-700"
+                            : "bg-slate-50 border-slate-200 text-slate-600"
+                        }`}
+                      >
+                        <AlertCircle className="w-4 h-4 text-blue-500" />
+                        มีข้อเสนอแนะ / ส่งกลับแก้
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNoteStatus("APPROVED")}
+                        className={`p-2.5 rounded-xl border text-left font-bold flex items-center gap-2 transition ${
+                          noteStatus === "APPROVED"
+                            ? "bg-emerald-50 border-emerald-500 text-emerald-700"
+                            : "bg-slate-50 border-slate-200 text-slate-600"
+                        }`}
+                      >
+                        <CheckCircle className="w-4 h-4 text-emerald-500" />
+                        ผ่านการอนุมัติ
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* กล่องพิมพ์โน้ตใหม่ */}
+                  <div className="space-y-2 text-xs">
+                    <label className="font-bold text-slate-700 block">
+                      พิมพ์ข้อความโน้ต / คำแนะนำของอาจารย์:
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={noteInput}
+                      onChange={(e) => setNoteInput(e.target.value)}
+                      placeholder="เช่น เพิ่มการอ้างอิงเอกสารในบทที่ 2 และส่งฉบับปรับปรุงเข้ามาอีกครั้งครับ..."
+                      className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-slate-900"
+                    />
+                  </div>
+
+                  {/* ปุ่มส่ง */}
+                  <div className="flex gap-2 justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveModalItem(null)}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSendingNote}
+                      onClick={handleSendNote}
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/20 flex items-center gap-1.5 transition disabled:opacity-50"
+                    >
+                      {isSendingNote ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> กำลังส่งเข้า LINE...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-3.5 h-3.5" /> บันทึก & ส่งกลับไปยัง LINE ({activeModalItem.lineId})
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Modal ยืนยันการลบ */}
+            {itemToDelete && (
+              <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
+                  <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div className="text-center space-y-1">
+                    <h4 className="text-base font-bold text-slate-900">ยืนยันการลบโครงงาน?</h4>
+                    <p className="text-xs text-slate-500 line-clamp-2">
+                      คุณต้องการลบโครงงาน &ldquo;{itemToDelete.projectTitle}&rdquo; ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้
+                    </p>
+                  </div>
+                  <div className="flex gap-2 justify-center pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setItemToDelete(null)}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isDeleting}
+                      onClick={handleDeleteSubmission}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {isDeleting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      ยืนยันลบ
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* 4. LINE NOTIFICATION SIMULATOR PREVIEW                         */}
+        {/* ============================================================== */}
+        {currentUser !== null && activeTab === "LINE_PREVIEW" && (
+          <div className="max-w-4xl mx-auto space-y-6">
+            <div className="text-center max-w-lg mx-auto">
+              <span className="text-xs font-bold text-[#06C755] bg-emerald-50 px-3 py-1 rounded-full uppercase">
+                ตัวอย่างการแจ้งเตือนจริงใน LINE
+              </span>
+              <h2 className="text-xl font-extrabold text-slate-900 mt-2">
+                รูปแบบข้อความการ์ดที่ส่งผ่าน LINE Messaging API
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                ระบบจะส่งข้อความแจ้งเตือนอัตโนมัติ 2 ทิศทาง: เข้า LINE อาจารย์เมื่อมีการส่งงาน และส่งกลับเข้า LINE นักศึกษาเมื่ออาจารย์โน้ตตรวจงาน
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start pt-2">
+              {/* Card 1: Alert to Advisor */}
+              <div className="bg-[#78909C] p-5 rounded-3xl shadow-lg space-y-3">
+                <div className="flex items-center gap-2 text-white text-xs font-bold px-1">
+                  <Smartphone className="w-4 h-4 text-emerald-300" />
+                  ข้อความเด้งเข้า LINE อาจารย์ (เมื่อ นศ. กดบันทึก)
+                </div>
+
+                <div className="bg-white rounded-2xl overflow-hidden shadow-md text-slate-800 text-xs">
+                  <div className="bg-[#06C755] p-3.5 text-white">
+                    <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold uppercase">
+                      New Submission
+                    </span>
+                    <h4 className="text-sm font-bold mt-1">📬 แจ้งเตือน: มีการส่งโครงการใหม่</h4>
+                  </div>
+                  <div className="p-4 space-y-2">
+                    <p className="font-bold text-slate-900 text-xs">
+                      {submissions[0]?.projectTitle || "ระบบวิเคราะห์ความสุกของผลไม้ด้วยคอมพิวเตอร์วิทัศน์"}
+                    </p>
+                    <div className="text-slate-600 space-y-1 pt-1 border-t border-slate-100 text-[11px]">
+                      <p>• <span className="font-semibold">กลุ่ม:</span> {submissions[0]?.groupName || "กลุ่ม DurianVision"}</p>
+                      <p>• <span className="font-semibold">สาขา:</span> {submissions[0]?.department || "วิทยาการคอมพิวเตอร์"}</p>
+                      <p>• <span className="font-semibold">ผู้จัดทำ:</span> {submissions[0]?.studentName || "นายธนกฤต วิเศษ"} ({submissions[0]?.studentId || "6509611234"})</p>
+                      <p>• <span className="font-semibold text-emerald-700">ID Line:</span> {submissions[0]?.lineId || "thana_dev"}</p>
+                      <p>• <span className="font-semibold">ไฟล์แนบ:</span> {submissions[0]?.pdfFileName || "Proposal_Durian.pdf"}</p>
+                    </div>
+                  </div>
+                  <div className="p-3 bg-slate-50 border-t border-slate-100">
+                    <button
+                      onClick={() => setActiveTab("REPORT")}
+                      className="w-full py-2 bg-[#06C755] text-white rounded-xl font-bold text-xs hover:bg-[#05a948] transition"
+                    >
+                      🔍 เปิดหน้ารายงานเพื่อตรวจงาน
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 2: Note to Student */}
+              <div className="bg-[#78909C] p-5 rounded-3xl shadow-lg space-y-3">
+                <div className="flex items-center gap-2 text-white text-xs font-bold px-1">
+                  <Smartphone className="w-4 h-4 text-blue-300" />
+                  ข้อความเด้งกลับเข้า LINE นศ. (เมื่ออาจารย์กดส่งโน้ต)
+                </div>
+
+                <div className="bg-white rounded-2xl overflow-hidden shadow-md text-slate-800 text-xs">
+                  <div className="bg-[#2563EB] p-3.5 text-white">
+                    <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold uppercase">
+                      Advisor Note
+                    </span>
+                    <h4 className="text-sm font-bold mt-1">📝 ข้อความตอบกลับจากอาจารย์ที่ปรึกษา</h4>
+                  </div>
+                  <div className="p-4 space-y-2">
+                    <p className="font-bold text-slate-900 text-xs">
+                      {submissions[0]?.projectTitle || "ระบบวิเคราะห์ความสุกของผลไม้ด้วยคอมพิวเตอร์วิทัศน์"}
+                    </p>
+                    <div className="bg-slate-100 p-3 rounded-xl border border-slate-200 text-slate-900 space-y-1">
+                      <span className="font-bold block text-[11px] text-slate-700">
+                        💬 ความคิดเห็น / สิ่งที่ต้องปรับปรุง:
+                      </span>
+                      <p className="text-xs text-slate-800 italic">
+                        &ldquo;{submissions[0]?.notes?.[0]?.content || "หัวข้อน่าสนใจมาก ขอให้เพิ่มการทบทวนวรรณกรรมเกี่ยวกับสถาปัตยกรรม YOLOv8 ในบทที่ 2 ด้วยครับ"}&rdquo;
+                      </p>
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      ส่งถึง ID Line: {submissions[0]?.lineId || "thana_dev"}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-slate-50 border-t border-slate-100">
+                    <div className="text-center text-[11px] font-semibold text-blue-600">
+                      นักศึกษาเปิดอ่านและปรับปรุงตามคำแนะนำได้ทันที
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* 5. SETTINGS & PRODUCTION GUIDE (ใช้งานจริง)                    */}
+        {/* ============================================================== */}
+        {currentUser !== null && activeTab === "SETTINGS" && (
+          <div className="max-w-3xl mx-auto space-y-8">
+            <div className="border-b border-slate-200 pb-4">
+              <span className="text-xs font-bold text-slate-900 bg-slate-200 px-3 py-1 rounded-full uppercase">
+                ⚙️ ตั้งค่าและนำระบบไปใช้งานจริง
+              </span>
+              <h2 className="text-2xl font-extrabold text-slate-900 mt-2">
+                วิธีเชื่อมต่อ LINE จริง และนำเว็บไซต์ขึ้นออนไลน์
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                ระบบเชื่อมต่อกับบัญชี LINE Official Account ของคุณเรียบร้อยแล้ว หรือปรับเปลี่ยนค่า Token ได้ทันทีที่นี่
+              </p>
+            </div>
+
+            {/* Status Card */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+                    lineStatus.isConfigured
+                      ? "bg-emerald-100 text-emerald-600"
+                      : "bg-amber-100 text-amber-600"
+                  }`}
+                >
+                  <Smartphone className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">
+                    สถานะการเชื่อมต่อ LINE Messaging API
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {lineStatus.isConfigured
+                      ? `เชื่อมต่อกับ LINE อาจารย์เรียบร้อยแล้ว (${lineStatus.advisorIdMasked})`
+                      : "ปัจจุบันอยู่ในโหมดจำลอง (ยังไม่ได้เชื่อมต่อ Token ของจริง)"}
+                  </p>
+                </div>
+              </div>
+
+              <span
+                className={`text-xs font-bold px-3 py-1 rounded-full ${
+                  lineStatus.isConfigured
+                    ? "bg-emerald-500 text-white"
+                    : "bg-amber-100 text-amber-800"
+                }`}
+              >
+                {lineStatus.isConfigured ? "พร้อมใช้งานจริง" : "โหมดจำลอง"}
+              </span>
+            </div>
+
+            {/* Quick Connect Form */}
+            <div className="bg-white p-7 rounded-3xl border border-slate-200 shadow-sm space-y-5">
+              <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                <Lock className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  อัปเดตหรือเปลี่ยนค่าการเชื่อมต่อ LINE
+                </h3>
+              </div>
+
+              <form onSubmit={handleSaveAndTestLine} className="space-y-4 text-xs">
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-700 block">
+                    1. Channel Access Token (จาก LINE Developers Console)
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={lineSettings.token}
+                    onChange={(e) => setLineSettings({ ...lineSettings, token: e.target.value })}
+                    placeholder="วางรหัส Token ยาวๆ ที่ได้จากหน้า Messaging API"
+                    className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-mono text-slate-900"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-700 block">
+                    2. LINE User ID ของอาจารย์ (ขึ้นต้นด้วยตัว U... ความยาวประมาณ 33 ตัวอักษร)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={lineSettings.advisorId}
+                    onChange={(e) => setLineSettings({ ...lineSettings, advisorId: e.target.value })}
+                    placeholder="เช่น U41bd7b5a88f4dff8fd2ea69d9b34a873"
+                    className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-mono text-slate-900"
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    * ดูได้จากหน้า LINE Developers Console แท็บ Basic settings หัวข้อ Your user ID
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingLine}
+                  className="w-full py-3 bg-[#06C755] hover:bg-[#05a948] text-white rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition disabled:opacity-50"
+                >
+                  {isSavingLine ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      กำลังส่งข้อความทดสอบไปยังแอป LINE...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" />
+                      บันทึกและส่งข้อความทดสอบเข้าแอป LINE มือถือทันที
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+
+            {/* 4 Step Visual Guide for Online Deployment */}
+            <div className="bg-slate-100 p-6 rounded-3xl border border-slate-200 text-xs space-y-4 text-slate-700">
+              <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                <Globe className="w-4 h-4 text-blue-600" />
+                วิธีนำเว็บไซต์ขึ้นออนไลน์ (Deploy ให้ทุกคนเข้าใช้ผ่านอินเทอร์เน็ตได้ฟรี)
+              </h4>
+              <ol className="list-decimal pl-5 space-y-2 leading-relaxed">
+                <li>
+                  <strong>อัปโหลดโปรเจกต์ขึ้น GitHub:</strong> นำโค้ดโฟลเดอร์นี้ขึ้น GitHub Repository ของคุณ
+                </li>
+                <li>
+                  <strong>เชื่อมต่อกับ Vercel:</strong> เข้าเว็บ <a href="https://vercel.com" target="_blank" rel="noreferrer" className="text-blue-600 underline font-bold">vercel.com</a> แล้วกด Import โครงการนี้
+                </li>
+                <li>
+                  <strong>ใส่ Environment Variables บน Vercel:</strong> นำค่า <code className="bg-white px-1.5 py-0.5 rounded font-mono">LINE_CHANNEL_ACCESS_TOKEN</code> และ <code className="bg-white px-1.5 py-0.5 rounded font-mono">LINE_ADVISOR_USER_ID</code> ไปใส่ในแท็บ Environment Variables ของ Vercel
+                </li>
+                <li>
+                  <strong>กด Deploy:</strong> คุณจะได้ลิงก์เว็บไซต์ เช่น <code className="bg-white px-1.5 py-0.5 rounded font-mono">https://tu-project-tracker.vercel.app</code> ส่งให้นักศึกษาและอาจารย์เปิดใช้งานได้จากทุกที่ทั่วโลกทันทีครับ!
+                </li>
+              </ol>
+            </div>
+          </div>
+        )}
+
+      </main>
+    </div>
+  );
+}
