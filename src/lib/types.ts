@@ -19,6 +19,8 @@ export interface SubmissionItem {
   studentName: string;
   studentId: string;
   lineId: string;
+  lineDisplayName?: string;
+  linePictureUrl?: string;
   pdfFileName: string;
   pdfFileUrl: string;
   submittedAt: string;

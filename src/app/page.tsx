@@ -39,6 +39,14 @@ import {
 } from "lucide-react";
 import { SubmissionItem, UserRole, ProjectStatus } from "@/lib/types";
 
+export interface LiffProfile {
+  userId: string;
+  displayName: string;
+  pictureUrl?: string;
+  statusMessage?: string;
+  isMock?: boolean;
+}
+
 export default function AppMain() {
   // สิทธิ์ผู้ใช้งาน: "admin" (อาจารย์), "general" (นักศึกษา), null (ยังไม่ล็อกอิน)
   const [currentUser, setCurrentUser] = useState<UserRole>("general");
@@ -62,9 +70,17 @@ export default function AppMain() {
     studentName: "",
     studentId: "",
     lineId: "",
+    lineDisplayName: "",
+    linePictureUrl: "",
   });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // สถานะ LINE LIFF (LINE Front-end Framework)
+  const [liffProfile, setLiffProfile] = useState<LiffProfile | null>(null);
+  const [isLiffReady, setIsLiffReady] = useState<boolean>(false);
+  const [isLiffLoading, setIsLiffLoading] = useState<boolean>(true);
+  const [liffError, setLiffError] = useState<string | null>(null);
 
   // โมดอลเขียนโน้ตของอาจารย์
   const [activeModalItem, setActiveModalItem] = useState<SubmissionItem | null>(null);
@@ -83,10 +99,13 @@ export default function AppMain() {
   const [lineSettings, setLineSettings] = useState({
     token: "",
     advisorId: "",
+    liffId: "",
   });
   const [lineStatus, setLineStatus] = useState<{
     isConfigured: boolean;
     advisorIdMasked?: string;
+    liffId?: string;
+    hasLiffId?: boolean;
   }>({ isConfigured: false });
   const [isSavingLine, setIsSavingLine] = useState<boolean>(false);
 
@@ -109,20 +128,142 @@ export default function AppMain() {
     }
   };
 
+  // เริ่มต้นทำงาน LINE LIFF SDK
+  const initLiff = async (targetLiffId?: string) => {
+    const liffIdToUse = targetLiffId || process.env.NEXT_PUBLIC_LIFF_ID;
+    if (!liffIdToUse) {
+      setIsLiffLoading(false);
+      return;
+    }
+
+    try {
+      setIsLiffLoading(true);
+      // @ts-ignore
+      const liff = typeof window !== "undefined" ? window.liff : null;
+      if (!liff) {
+        setIsLiffLoading(false);
+        return;
+      }
+
+      await liff.init({ liffId: liffIdToUse });
+      setIsLiffReady(true);
+
+      if (liff.isLoggedIn()) {
+        const profile = await liff.getProfile();
+        const userProfile: LiffProfile = {
+          userId: profile.userId,
+          displayName: profile.displayName,
+          pictureUrl: profile.pictureUrl,
+          statusMessage: profile.statusMessage,
+          isMock: false,
+        };
+        setLiffProfile(userProfile);
+        setFormData((prev) => ({
+          ...prev,
+          lineId: profile.userId,
+          studentName: prev.studentName ? prev.studentName : profile.displayName,
+          lineDisplayName: profile.displayName,
+          linePictureUrl: profile.pictureUrl || "",
+        }));
+      }
+    } catch (err: any) {
+      console.error("LIFF Init error:", err);
+      setLiffError(err.message || "เกิดข้อผิดพลาดในการโหลด LIFF");
+    } finally {
+      setIsLiffLoading(false);
+    }
+  };
+
   // เช็กสถานะการตั้งค่า LINE
   const fetchLineStatus = async () => {
     try {
       const res = await fetch("/api/settings/line");
       const data = await res.json();
       setLineStatus(data);
+      if (data.liffId) {
+        setLineSettings((prev) => ({ ...prev, liffId: data.liffId }));
+        initLiff(data.liffId);
+      } else if (process.env.NEXT_PUBLIC_LIFF_ID) {
+        initLiff(process.env.NEXT_PUBLIC_LIFF_ID);
+      } else {
+        setIsLiffLoading(false);
+      }
     } catch (err) {
       console.error("Fetch line status error:", err);
+      setIsLiffLoading(false);
     }
+  };
+
+  const handleLiffLogin = () => {
+    // @ts-ignore
+    const liff = typeof window !== "undefined" ? window.liff : null;
+    if (liff && isLiffReady) {
+      liff.login();
+    } else {
+      alert("ยังไม่ได้ตั้งค่า LIFF ID หรือ LIFF กำลังโหลด กรุณาตรวจสอบในแท็บตั้งค่า LINE ครับ");
+    }
+  };
+
+  const handleLiffLogout = () => {
+    // @ts-ignore
+    const liff = typeof window !== "undefined" ? window.liff : null;
+    try {
+      if (liff && liff.isLoggedIn()) {
+        liff.logout();
+      }
+    } catch {}
+    setLiffProfile(null);
+    setFormData((prev) => ({
+      ...prev,
+      lineId: "",
+      lineDisplayName: "",
+      linePictureUrl: "",
+    }));
+    setToastMessage("ออกจากระบบ LINE เรียบร้อยแล้ว");
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  // จำลองการเชื่อมต่อ LIFF สำหรับทดสอบบน Localhost
+  const handleMockLiff = () => {
+    const mockProfile: LiffProfile = {
+      userId: "U41bd7b5a88f4dff8fd2ea69d9b34a873",
+      displayName: "นายธนกฤต วิเศษ (LINE)",
+      pictureUrl: "https://api.dicebear.com/7.x/bottts/svg?seed=student_line",
+      statusMessage: "นักศึกษา TU วท.บ.วิทยาการคอมพิวเตอร์",
+      isMock: true,
+    };
+    setLiffProfile(mockProfile);
+    setFormData((prev) => ({
+      ...prev,
+      lineId: mockProfile.userId,
+      studentName: prev.studentName ? prev.studentName : "นายธนกฤต วิเศษ",
+      lineDisplayName: mockProfile.displayName,
+      linePictureUrl: mockProfile.pictureUrl,
+    }));
+    setToastMessage("📲 จำลองเชื่อมต่อ LINE (LIFF) สำเร็จ! ดึงข้อมูลและ LINE User ID ลงฟอร์มเรียบร้อยแล้ว");
+    setTimeout(() => setToastMessage(null), 5000);
   };
 
   useEffect(() => {
     fetchSubmissions();
     fetchLineStatus();
+
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      const roleParam = params.get("role");
+
+      if (tabParam?.toUpperCase() === "REPORT" || roleParam === "admin") {
+        setCurrentUser("admin");
+        setActiveTab("REPORT");
+      } else if (tabParam?.toUpperCase() === "FORM" || roleParam === "general") {
+        setCurrentUser("general");
+        setActiveTab("FORM");
+      } else if (tabParam?.toUpperCase() === "SETTINGS") {
+        setCurrentUser("admin");
+        setActiveTab("SETTINGS");
+      }
+    }
   }, []);
 
   // เมื่อเปลี่ยนสิทธิ์ ให้ปรับแท็บอัตโนมัติ
@@ -252,6 +393,12 @@ export default function AppMain() {
       body.append("studentName", formData.studentName);
       body.append("studentId", formData.studentId);
       body.append("lineId", formData.lineId);
+      if (formData.lineDisplayName || liffProfile?.displayName) {
+        body.append("lineDisplayName", formData.lineDisplayName || liffProfile?.displayName || "");
+      }
+      if (formData.linePictureUrl || liffProfile?.pictureUrl) {
+        body.append("linePictureUrl", formData.linePictureUrl || liffProfile?.pictureUrl || "");
+      }
       body.append("pdfFile", selectedFile);
 
       const res = await fetch("/api/submissions", {
@@ -261,20 +408,22 @@ export default function AppMain() {
       const data = await res.json();
 
       if (data.success) {
-        setToastMessage(`✅ บันทึกลง JSON และส่งแจ้งเตือนเข้า LINE อาจารย์เรียบร้อยแล้ว!`);
+        setToastMessage(`✅ บันทึกโครงงานและส่งแจ้งเตือนเข้า LINE อาจารย์เรียบร้อยแล้ว!`);
         setTimeout(() => setToastMessage(null), 6000);
 
         // บันทึกรหัสนักศึกษาไว้ให้ในช่องค้นหาติดตามผลทันที
         setStudentSearchKeyword(formData.studentId);
 
-        // รีเซ็ตฟอร์ม
+        // รีเซ็ตฟอร์ม (คงค่า LINE ของผู้ใช้ไว้หากล็อกอิน LIFF อยู่)
         setFormData({
           projectTitle: "",
           groupName: "",
           department: "วิทยาการคอมพิวเตอร์",
-          studentName: "",
+          studentName: liffProfile ? (liffProfile.isMock ? "นายธนกฤต วิเศษ" : liffProfile.displayName) : "",
           studentId: "",
-          lineId: "",
+          lineId: liffProfile ? liffProfile.userId : "",
+          lineDisplayName: liffProfile ? liffProfile.displayName : "",
+          linePictureUrl: liffProfile ? liffProfile.pictureUrl || "" : "",
         });
         setSelectedFile(null);
 
@@ -438,6 +587,7 @@ export default function AppMain() {
         body: JSON.stringify({
           channelAccessToken: lineSettings.token,
           advisorLineId: lineSettings.advisorId,
+          liffId: lineSettings.liffId,
         }),
       });
       const data = await res.json();
@@ -446,9 +596,44 @@ export default function AppMain() {
         setToastMessage(data.message);
         setTimeout(() => setToastMessage(null), 7000);
         await fetchLineStatus();
-        setLineSettings({ token: "", advisorId: "" });
+        if (lineSettings.liffId) {
+          initLiff(lineSettings.liffId);
+        }
       } else {
         alert(data.message || "เชื่อมต่อไม่สำเร็จ กรุณาตรวจสอบข้อมูล");
+      }
+    } catch (err: any) {
+      alert("เกิดข้อผิดพลาด: " + err.message);
+    } finally {
+      setIsSavingLine(false);
+    }
+  };
+
+  // บันทึกเฉพาะ LIFF ID
+  const handleSaveLiffOnly = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!lineSettings.liffId.trim()) {
+      alert("กรุณากรอก LIFF ID");
+      return;
+    }
+
+    setIsSavingLine(true);
+    try {
+      const res = await fetch("/api/settings/line", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          liffId: lineSettings.liffId.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setToastMessage(data.message);
+        setTimeout(() => setToastMessage(null), 6000);
+        await fetchLineStatus();
+        initLiff(lineSettings.liffId.trim());
+      } else {
+        alert(data.message || "บันทึก LIFF ID ไม่สำเร็จ");
       }
     } catch (err: any) {
       alert("เกิดข้อผิดพลาด: " + err.message);
@@ -682,6 +867,90 @@ export default function AppMain() {
                 </p>
               </div>
 
+              {/* LINE LIFF Profile & Quick Connect Card */}
+              {liffProfile ? (
+                <div className="bg-emerald-50/80 border border-emerald-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+                  <div className="flex items-center gap-3">
+                    {liffProfile.pictureUrl ? (
+                      <img
+                        src={liffProfile.pictureUrl}
+                        alt={liffProfile.displayName}
+                        className="w-12 h-12 rounded-full object-cover border-2 border-[#06C755] shadow-xs"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-full bg-[#06C755] text-white flex items-center justify-center font-bold text-base shadow-xs">
+                        {liffProfile.displayName?.charAt(0) || "L"}
+                      </div>
+                    )}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-slate-900 text-sm">
+                          {liffProfile.displayName}
+                        </h4>
+                        <span className="inline-flex items-center gap-1 bg-[#06C755] text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
+                          <CheckCircle2 className="w-3 h-3" /> LIFF เชื่อมต่อสำเร็จ
+                        </span>
+                        {liffProfile.isMock && (
+                          <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            โหมดทดสอบ
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-emerald-800 font-mono mt-0.5">
+                        LINE User ID: <span className="font-bold">{liffProfile.userId}</span>
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        ✓ ระบบจะส่งการแจ้งเตือนและโน้ตความคิดเห็นจากอาจารย์เข้าแอป LINE บัญชีนี้โดยตรง
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 self-end sm:self-center">
+                    <button
+                      type="button"
+                      onClick={handleLiffLogout}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-600 font-semibold transition shadow-xs"
+                    >
+                      สลับบัญชี LINE
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-[#06C755] text-white flex items-center justify-center shrink-0 shadow-sm mt-0.5">
+                      <Smartphone className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                        📱 แนะนำ: เชื่อมต่อด้วย LINE (LIFF) เพื่อรับแจ้งเตือนอัตโนมัติ
+                      </h4>
+                      <p className="text-xs text-slate-600 mt-0.5">
+                        เมื่อเปิดผ่าน LINE หรือเข้าสู่ระบบด้วย LINE ระบบจะดึงชื่อและ <strong>LINE User ID</strong> มากรอกในฟอร์มให้อัตโนมัติ 100% อาจารย์จะสามารถส่งโน้ตแจ้งเตือนเข้ามือถือของคุณได้จริง
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleLiffLogin}
+                      className="px-3.5 py-2 bg-[#06C755] hover:bg-[#05a948] text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 transition"
+                    >
+                      <Smartphone className="w-3.5 h-3.5" />
+                      เข้าสู่ระบบด้วย LINE
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleMockLiff}
+                      title="กดเพื่อจำลองข้อมูล LINE สำหรับทดสอบบน localhost ทันที"
+                      className="px-3 py-2 bg-white hover:bg-slate-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold flex items-center gap-1 transition shadow-xs"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      จำลอง LIFF (Demo)
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <form onSubmit={handleSubmitForm} className="space-y-4 text-xs">
                 {/* 1. ชื่อโครงการ */}
                 <div className="space-y-1.5">
@@ -762,19 +1031,39 @@ export default function AppMain() {
 
                 {/* 6. ID Line สำหรับรับแจ้งเตือน */}
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-700 block">
-                    6. ID Line (สำหรับให้อาจารย์ส่งโน้ตตอบกลับ) <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.lineId}
-                    onChange={(e) => setFormData({ ...formData, lineId: e.target.value })}
-                    placeholder="เช่น thanakrit_line หรือ User ID ของนักศึกษา"
-                    className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-slate-900"
-                  />
-                  <p className="text-[11px] text-slate-400">
-                    * เมื่ออาจารย์ตรวจงานและพิมพ์โน้ต ระบบจะส่งข้อความตอบกลับไปยัง LINE นี้
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-700 block">
+                      6. LINE User ID สำหรับรับการแจ้งเตือนผลตรวจ <span className="text-rose-500">*</span>
+                    </label>
+                    {liffProfile && (
+                      <span className="text-[11px] text-[#06C755] font-bold flex items-center gap-1">
+                        <CheckCircle className="w-3.5 h-3.5" /> ดึงรหัสจาก LINE LIFF อัตโนมัติ
+                      </span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      required
+                      value={formData.lineId}
+                      onChange={(e) => setFormData({ ...formData, lineId: e.target.value })}
+                      placeholder="เช่น U41bd7b5a88f4dff8fd2ea69d9b34a873 หรือรหัสบัญชี LINE"
+                      className={`w-full p-3 rounded-xl border focus:outline-none focus:ring-2 font-mono text-xs ${
+                        formData.lineId.startsWith("U") && formData.lineId.length > 20
+                          ? "border-emerald-300 bg-emerald-50/40 text-emerald-900 focus:ring-emerald-500"
+                          : "border-slate-300 bg-white text-slate-900 focus:ring-emerald-500"
+                      }`}
+                    />
+                    {formData.lineId.startsWith("U") && formData.lineId.length > 20 && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Check className="w-3 h-3" /> รหัสส่ง LINE ได้จริง
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    {formData.lineId.startsWith("U") && formData.lineId.length > 20
+                      ? "✓ รูปแบบรหัสถูกต้อง (ขึ้นต้นด้วย U 33 หลัก) ระบบจะส่ง Push Message ข้อความโน้ตตรงเข้าแอป LINE มือถือนักศึกษาได้ทันที"
+                      : "💡 ข้อความจะแจ้งเตือนเข้าแอป LINE บนมือถือได้จริงเมื่อรหัสเป็น User ID (ขึ้นต้นด้วย U) หรือกด 'เข้าสู่ระบบด้วย LINE' ด้านบน"}
                   </p>
                 </div>
 
@@ -1173,10 +1462,41 @@ export default function AppMain() {
 
                             {/* ID Line */}
                             <td className="py-4 px-4">
-                              <span className="bg-emerald-50 text-emerald-800 font-mono font-bold px-2 py-1 rounded-md text-[11px] inline-flex items-center gap-1">
-                                <Smartphone className="w-3 h-3 text-[#06C755]" />
-                                {item.lineId}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                {item.linePictureUrl ? (
+                                  <img
+                                    src={item.linePictureUrl}
+                                    alt="LINE"
+                                    className="w-7 h-7 rounded-full object-cover border border-emerald-300 shrink-0"
+                                  />
+                                ) : (
+                                  <span className="w-7 h-7 rounded-full bg-[#06C755]/10 text-[#06C755] flex items-center justify-center font-bold text-xs shrink-0">
+                                    <Smartphone className="w-3.5 h-3.5" />
+                                  </span>
+                                )}
+                                <div className="min-w-0">
+                                  {item.lineDisplayName && (
+                                    <div className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                                      <span className="truncate max-w-[120px]">{item.lineDisplayName}</span>
+                                      {item.lineId.startsWith("U") && item.lineId.length > 20 && (
+                                        <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-1.5 py-0.2 rounded-full shrink-0">
+                                          LIFF
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                  <span
+                                    title={item.lineId}
+                                    className={`font-mono text-[10px] px-1.5 py-0.5 rounded inline-block max-w-[130px] truncate ${
+                                      item.lineId.startsWith("U") && item.lineId.length > 20
+                                        ? "bg-emerald-50 text-emerald-800 font-semibold"
+                                        : "bg-slate-100 text-slate-600"
+                                    }`}
+                                  >
+                                    {item.lineId}
+                                  </span>
+                                </div>
+                              </div>
                             </td>
 
                             {/* ไฟล์ PDF */}
@@ -1270,8 +1590,23 @@ export default function AppMain() {
                         {activeModalItem.projectTitle}
                       </h3>
                       <p className="text-xs text-slate-500">
-                        กลุ่ม: {activeModalItem.groupName} • ผู้รับ: {activeModalItem.studentName} (ID Line: <strong className="text-emerald-600">{activeModalItem.lineId}</strong>)
+                        กลุ่ม: {activeModalItem.groupName} • ผู้รับ: {activeModalItem.studentName}
+                        {activeModalItem.lineDisplayName && ` (${activeModalItem.lineDisplayName})`}
                       </p>
+                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs text-slate-600 font-mono bg-slate-100 px-2 py-0.5 rounded">
+                          ID: {activeModalItem.lineId}
+                        </span>
+                        {activeModalItem.lineId.startsWith("U") && activeModalItem.lineId.length > 20 ? (
+                          <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-[#06C755]" /> ส่งเข้า LINE มือถือนักศึกษาได้จริง
+                          </span>
+                        ) : (
+                          <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                            ⚠️ โหมดจำลอง (รหัสไม่ใช่ LINE User ID)
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <button
                       onClick={() => setActiveModalItem(null)}
@@ -1524,38 +1859,87 @@ export default function AppMain() {
             </div>
 
             {/* Status Card */}
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div
-                  className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+                      lineStatus.isConfigured
+                        ? "bg-emerald-100 text-emerald-600"
+                        : "bg-amber-100 text-amber-600"
+                    }`}
+                  >
+                    <Smartphone className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">
+                      1. สถานะ LINE Messaging API (แจ้งเตือนอาจารย์ & ส่งผลตรวจ)
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {lineStatus.isConfigured
+                        ? `เชื่อมต่อกับ LINE อาจารย์เรียบร้อยแล้ว (${lineStatus.advisorIdMasked})`
+                        : "ปัจจุบันอยู่ในโหมดจำลอง (ยังไม่ได้เชื่อมต่อ Token ของจริง)"}
+                    </p>
+                  </div>
+                </div>
+
+                <span
+                  className={`text-xs font-bold px-3 py-1 rounded-full ${
                     lineStatus.isConfigured
-                      ? "bg-emerald-100 text-emerald-600"
-                      : "bg-amber-100 text-amber-600"
+                      ? "bg-emerald-500 text-white"
+                      : "bg-amber-100 text-amber-800"
                   }`}
                 >
-                  <Smartphone className="w-6 h-6" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900">
-                    สถานะการเชื่อมต่อ LINE Messaging API
-                  </h4>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {lineStatus.isConfigured
-                      ? `เชื่อมต่อกับ LINE อาจารย์เรียบร้อยแล้ว (${lineStatus.advisorIdMasked})`
-                      : "ปัจจุบันอยู่ในโหมดจำลอง (ยังไม่ได้เชื่อมต่อ Token ของจริง)"}
-                  </p>
-                </div>
+                  {lineStatus.isConfigured ? "พร้อมใช้งานจริง" : "โหมดจำลอง"}
+                </span>
               </div>
 
-              <span
-                className={`text-xs font-bold px-3 py-1 rounded-full ${
-                  lineStatus.isConfigured
-                    ? "bg-emerald-500 text-white"
-                    : "bg-amber-100 text-amber-800"
-                }`}
-              >
-                {lineStatus.isConfigured ? "พร้อมใช้งานจริง" : "โหมดจำลอง"}
-              </span>
+              {/* LIFF Status Sub-row */}
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                      lineStatus.hasLiffId
+                        ? "bg-emerald-100 text-[#06C755]"
+                        : "bg-slate-100 text-slate-500"
+                    }`}
+                  >
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800">
+                      2. สถานะ LINE LIFF (ดึงข้อมูลนักศึกษา & LINE User ID อัตโนมัติ)
+                    </h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {lineStatus.hasLiffId ? (
+                        <>
+                          ลิงก์ LIFF ฟอร์มส่งงาน:{" "}
+                          <a
+                            href={`https://liff.line.me/${lineStatus.liffId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-emerald-700 font-bold underline font-mono"
+                          >
+                            https://liff.line.me/{lineStatus.liffId}
+                          </a>
+                        </>
+                      ) : (
+                        "ยังไม่ได้ระบุ LIFF ID (สามารถสร้างได้ฟรีใน LINE Developers Console)"
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <span
+                  className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                    lineStatus.hasLiffId
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {lineStatus.hasLiffId ? "เปิดใช้งาน LIFF แล้ว" : "ยังไม่ได้ตั้งค่า"}
+                </span>
+              </div>
             </div>
 
             {/* Quick Connect Form */}
@@ -1563,7 +1947,7 @@ export default function AppMain() {
               <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
                 <Lock className="w-4 h-4 text-emerald-600" />
                 <h3 className="text-sm font-bold text-slate-900">
-                  อัปเดตหรือเปลี่ยนค่าการเชื่อมต่อ LINE
+                  อัปเดตการเชื่อมต่อ LINE Messaging API & LIFF
                 </h3>
               </div>
 
@@ -1599,24 +1983,119 @@ export default function AppMain() {
                   </p>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={isSavingLine}
-                  className="w-full py-3 bg-[#06C755] hover:bg-[#05a948] text-white rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition disabled:opacity-50"
-                >
-                  {isSavingLine ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      กำลังส่งข้อความทดสอบไปยังแอป LINE...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-3.5 h-3.5" />
-                      บันทึกและส่งข้อความทดสอบเข้าแอป LINE มือถือทันที
-                    </>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-700 block">
+                      3. LIFF ID สำหรับฟอร์มนักศึกษา (ไม่บังคับ - ระบุเพื่อเปิดใช้งานดึงข้อมูลอัตโนมัติ)
+                    </label>
+                    <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-bold">
+                      LIFF Integration
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={lineSettings.liffId}
+                    onChange={(e) => setLineSettings({ ...lineSettings, liffId: e.target.value })}
+                    placeholder="เช่น 2012510989-xxxxxx (จากแท็บ LIFF ใน LINE Developers)"
+                    className="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-mono text-slate-900"
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    * เมื่อใส่ค่านี้ นักศึกษาที่เปิดฟอร์มผ่าน LINE ระบบจะดึง LINE User ID ให้อัตโนมัติ 100%
+                  </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                  <button
+                    type="submit"
+                    disabled={isSavingLine}
+                    className="flex-1 py-3 bg-[#06C755] hover:bg-[#05a948] text-white rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition disabled:opacity-50"
+                  >
+                    {isSavingLine ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        กำลังตรวจสอบและส่งข้อความทดสอบไปยังแอป LINE...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-3.5 h-3.5" />
+                        บันทึกและส่งข้อความทดสอบเข้าแอป LINE อาจารย์ทันที
+                      </>
+                    )}
+                  </button>
+
+                  {lineSettings.liffId && (
+                    <button
+                      type="button"
+                      onClick={handleSaveLiffOnly}
+                      disabled={isSavingLine}
+                      className="py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition disabled:opacity-50"
+                    >
+                      บันทึกเฉพาะ LIFF ID
+                    </button>
                   )}
-                </button>
+                </div>
               </form>
+            </div>
+
+            {/* Comprehensive LIFF Creation Step-by-Step Guide */}
+            <div className="bg-gradient-to-br from-emerald-50/70 to-teal-50/50 p-6 rounded-3xl border border-emerald-200 text-xs space-y-4 text-slate-700">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-[#06C755]" />
+                <h4 className="font-bold text-slate-900 text-sm">
+                  คู่มือวิธีสร้าง LINE LIFF App เพื่อดึง LINE User ID นักศึกษาอัตโนมัติ
+                </h4>
+              </div>
+              <ol className="list-decimal pl-5 space-y-2.5 leading-relaxed">
+                <li>
+                  <strong>เข้าสู่ระบบ LINE Developers:</strong> ไปที่{" "}
+                  <a
+                    href="https://developers.line.biz"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-emerald-700 font-bold underline"
+                  >
+                    https://developers.line.biz
+                  </a>{" "}
+                  แล้วเลือก Provider และ Channel (Messaging API) เดียวกับบอทของคุณ
+                </li>
+                <li>
+                  <strong>ไปที่แท็บ LIFF:</strong> คลิกแท็บ <strong>&quot;LIFF&quot;</strong> แล้วกดปุ่ม{" "}
+                  <strong>&quot;Add&quot;</strong> เพื่อสร้างแอปพลิเคชัน LIFF ใหม่
+                </li>
+                <li>
+                  <strong>ตั้งค่าข้อมูล LIFF:</strong>
+                  <ul className="list-disc pl-5 mt-1 space-y-1 text-slate-600">
+                    <li>
+                      <strong>LIFF app name:</strong> เช่น <code>ฟอร์มส่งโครงงาน มธ</code>
+                    </li>
+                    <li>
+                      <strong>Size:</strong> เลือก <code>Full</code> (เปิดเต็มหน้าจอมือถือ)
+                    </li>
+                    <li>
+                      <strong>Endpoint URL:</strong> ระบุ URL ของเว็บไซต์ (เช่น{" "}
+                      <code>https://project-tracking-system-for-advisor.vercel.app/form</code> หรือ URL บน Vercel)
+                    </li>
+                    <li>
+                      <strong>Scopes:</strong> ติ๊กถูกที่ <code>profile</code> และ <code>openid</code>
+                    </li>
+                    <li>
+                      <strong>Bot link feature:</strong> เลือก <code>On (Normal)</code> หรือ{" "}
+                      <code>On (Aggressive)</code> เพื่อเชิญชวนให้นักศึกษากดเพิ่มเพื่อนกับบอทอัตโนมัติ
+                    </li>
+                  </ul>
+                </li>
+                <li>
+                  <strong>กด Add และคัดลอก LIFF ID:</strong> นำรหัส <strong>LIFF ID</strong> (รูปแบบเช่น{" "}
+                  <code>2012510989-xxxxxx</code>) มาใส่ในช่องด้านบน แล้วกดบันทึก
+                </li>
+                <li>
+                  <strong>แชร์ลิงก์ให้นักศึกษา:</strong> คุณสามารถนำลิงก์{" "}
+                  <code className="bg-white px-1.5 py-0.5 rounded font-mono text-emerald-800">
+                    https://liff.line.me/{lineStatus.liffId || "{LIFF_ID}"}
+                  </code>{" "}
+                  ไปใส่ใน Rich Menu หรือส่งในกลุ่ม LINE ได้เลย! เมื่อนักศึกษาแตะเปิด ระบบจะล็อกอินและกรอกรหัส User ID ให้ครบ 100% ทันที
+                </li>
+              </ol>
             </div>
 
             {/* 4 Step Visual Guide for Online Deployment */}

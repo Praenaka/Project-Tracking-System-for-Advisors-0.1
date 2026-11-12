@@ -4,6 +4,19 @@
 import fs from "fs";
 import path from "path";
 
+export function getAppUrl(): string {
+  if (process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.includes("localhost")) {
+    return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
+}
+
 // ดึงค่าการตั้งค่า LINE จาก environment หรือไฟล์ .env.local โดยตรง
 function getLineConfig() {
   let token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -33,6 +46,7 @@ interface SendAdvisorPayload {
   studentName: string;
   studentId: string;
   lineId: string;
+  lineDisplayName?: string;
   pdfFileName: string;
   pdfFileUrl: string;
 }
@@ -109,7 +123,7 @@ export async function sendLineToAdvisor(payload: SendAdvisorPayload): Promise<{
               },
               {
                 type: "text",
-                text: `• ID Line นักศึกษา: ${payload.lineId}`,
+                text: `• LINE นักศึกษา: ${payload.lineDisplayName ? `${payload.lineDisplayName} ` : ""}(${payload.lineId.startsWith("U") && payload.lineId.length > 20 ? "LIFF เชื่อมต่อสำเร็จ" : payload.lineId})`,
                 size: "sm",
                 color: "#1DB446",
                 weight: "bold",
@@ -135,7 +149,7 @@ export async function sendLineToAdvisor(payload: SendAdvisorPayload): Promise<{
             action: {
               type: "uri",
               label: "🔍 เปิดหน้ารายงานเพื่อตรวจงาน",
-              uri: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/report`,
+              uri: `${getAppUrl()}/report`,
             },
           },
         ],
@@ -262,6 +276,22 @@ export async function sendLineToStudent(payload: SendStudentPayload): Promise<{
             text: `ส่งถึง ID Line: ${payload.studentLineId}`,
             size: "xs",
             color: "#94A3B8",
+          },
+        ],
+      },
+      footer: {
+        type: "box",
+        layout: "vertical",
+        contents: [
+          {
+            type: "button",
+            style: "primary",
+            color: "#2563EB",
+            action: {
+              type: "uri",
+              label: "📝 เปิดหน้าส่งงาน / ส่งฉบับแก้ไข",
+              uri: `${getAppUrl()}/form`,
+            },
           },
         ],
       },

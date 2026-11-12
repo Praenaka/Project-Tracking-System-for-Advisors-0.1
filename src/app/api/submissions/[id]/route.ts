@@ -1,23 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
 import { SubmissionItem, ProjectStatus } from "@/lib/types";
 import { sendLineToStudent } from "@/lib/line";
-
-const DATA_FILE_PATH = path.join(process.cwd(), "data", "submissions.json");
-
-function getSubmissions(): SubmissionItem[] {
-  try {
-    const raw = fs.readFileSync(DATA_FILE_PATH, "utf-8");
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-function saveSubmissions(list: SubmissionItem[]) {
-  fs.writeFileSync(DATA_FILE_PATH, JSON.stringify(list, null, 2), "utf-8");
-}
+import { getSubmissions, saveSubmissions } from "@/lib/storage";
 
 // อัปเดตสถานะโครงการ (PATCH)
 export async function PATCH(
@@ -116,4 +100,3 @@ export async function DELETE(
     );
   }
 }
-
