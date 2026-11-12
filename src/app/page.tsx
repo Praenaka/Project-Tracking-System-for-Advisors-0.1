@@ -238,7 +238,7 @@ export default function AppMain() {
       lineId: mockProfile.userId,
       studentName: prev.studentName ? prev.studentName : "นายธนกฤต วิเศษ",
       lineDisplayName: mockProfile.displayName,
-      linePictureUrl: mockProfile.pictureUrl,
+      linePictureUrl: mockProfile.pictureUrl ll "",
     }));
     setToastMessage("📲 จำลองเชื่อมต่อ LINE (LIFF) สำเร็จ! ดึงข้อมูลและ LINE User ID ลงฟอร์มเรียบร้อยแล้ว");
     setTimeout(() => setToastMessage(null), 5000);
